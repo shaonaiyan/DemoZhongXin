@@ -243,6 +243,7 @@ const App: React.FC = () => {
          logs: [...prev.logs, { timestamp: new Date().toLocaleTimeString(), message: 'Submitting deployment task to server...', type: 'info' }]
        }));
 
+      // 1. Start Deployment Job
       const res = await fetch('/api/deploy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -260,28 +261,69 @@ const App: React.FC = () => {
         throw new Error(result.error || 'Unknown error');
       }
 
+      const jobId = result.jobId;
       setDeployState(prev => ({
         ...prev,
-        stage: DeployStage.COMPLETED,
-        logs: [...prev.logs, { timestamp: new Date().toLocaleTimeString(), message: 'Deployment successful!', type: 'success' }]
+        logs: [...prev.logs, { timestamp: new Date().toLocaleTimeString(), message: `Job started (ID: ${jobId}). Waiting for completion...`, type: 'info' }]
       }));
-      
-      // Refresh projects list
-      const listRes = await fetch('/api/games');
-      const listData = await listRes.json();
-      if (Array.isArray(listData)) {
-        setProjects(listData);
-      }
+
+      // 2. Poll for Status
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`/api/deploy/${jobId}`);
+          const statusData = await statusRes.json();
+
+          if (!statusRes.ok) return;
+
+          // Update Logs (Merge new logs)
+          if (statusData.logs && statusData.logs.length > 0) {
+             setDeployState(prev => {
+                // Simple de-duplication based on timestamp+message could be added here if needed
+                // For now, we just replace logs with server logs or append?
+                // Server returns ALL logs for the job. So we can just replace the "server" part of logs.
+                // But we have local logs too. 
+                // Let's just take server logs as source of truth for deployment phase.
+                return {
+                    ...prev,
+                    logs: statusData.logs // Use server logs directly
+                };
+             });
+          }
+
+          if (statusData.status === 'completed') {
+            clearInterval(pollInterval);
+            setDeployState(prev => ({
+                ...prev,
+                stage: DeployStage.COMPLETED,
+                isDeploying: false
+            }));
+            
+            // Refresh projects list
+            fetch('/api/games').then(r => r.json()).then(data => {
+                if (Array.isArray(data)) setProjects(data);
+            });
+            
+          } else if (statusData.status === 'failed') {
+             clearInterval(pollInterval);
+             throw new Error('Deployment reported failure from server.');
+          }
+
+        } catch (e) {
+           // Polling error (ignore transient)
+           console.error("Polling error", e);
+        }
+      }, 2000);
 
     } catch (error: any) {
        setDeployState(prev => ({
         ...prev,
         stage: DeployStage.FAILED,
-        logs: [...prev.logs, { timestamp: new Date().toLocaleTimeString(), message: `Deployment Failed: ${error.message}`, type: 'error' }]
+        logs: [...prev.logs, { timestamp: new Date().toLocaleTimeString(), message: `Deployment Failed: ${error.message}`, type: 'error' }],
+        isDeploying: false
       }));
     }
 
-    setDeployState(prev => ({ ...prev, isDeploying: false }));
+    // Note: isDeploying is set to false inside polling completion/error
   }, [repoUrl]);
 
   // Effect to trigger Gemini when stage becomes FAILED

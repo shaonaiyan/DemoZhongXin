@@ -16,6 +16,9 @@ const GAMES_DIR = '/var/www'; // Where games are deployed
 const NGINX_CONFIG_PATH = '/etc/nginx/conf.d/game.conf';
 const GAMES_JSON_PATH = path.join(__dirname, 'games.json');
 
+// --- In-Memory Job Store ---
+const jobs = {};
+
 // --- Helper Functions ---
 
 // Load games from local JSON file
@@ -57,6 +60,37 @@ const runCommand = (command) => {
   });
 };
 
+// Shared Build Logic
+const performBuild = async (targetDir, cleanPath, log) => {
+    if (await fs.pathExists(path.join(targetDir, 'package.json'))) {
+        log('Node project detected. Installing dependencies...');
+        // Note: npm install can be slow
+        await runCommand(`cd ${targetDir} && npm install`);
+        
+        log('Building project...');
+        let buildCmd = `cd ${targetDir} && npm run build`;
+        
+        // Check for Vite
+        try {
+            const pkg = await fs.readJson(path.join(targetDir, 'package.json'));
+            const isVite = pkg.devDependencies?.vite || pkg.dependencies?.vite;
+            if (isVite) {
+                log(`Detected Vite project. Setting base path to /${cleanPath}/`);
+                // Pass base path to vite build
+                buildCmd = `cd ${targetDir} && npm run build -- --base=/${cleanPath}/`;
+            }
+        } catch (e) {
+            console.warn("Failed to read package.json", e);
+        }
+
+        try {
+            await runCommand(buildCmd);
+        } catch (e) {
+             log('Build failed or no build script, assuming raw files or dist mismatch.', 'warning');
+        }
+    }
+};
+
 // --- API Routes ---
 
 // Get all games
@@ -75,7 +109,14 @@ app.post('/api/games/sync', async (req, res) => {
   res.json({ success: true });
 });
 
-// Add and Deploy a new game
+// Get Job Status
+app.get('/api/deploy/:jobId', (req, res) => {
+  const job = jobs[req.params.jobId];
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  res.json(job);
+});
+
+// Add and Deploy a new game (Async)
 app.post('/api/deploy', async (req, res) => {
   const { name, repoUrl, path: gamePath, description, coverImage } = req.body;
 
@@ -83,39 +124,76 @@ app.post('/api/deploy', async (req, res) => {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
+  const jobId = Date.now().toString();
+  jobs[jobId] = {
+    id: jobId,
+    status: 'pending',
+    logs: [],
+    result: null
+  };
+
+  res.json({ success: true, jobId });
+
+  // Start background process
+  deployBackground(jobId, { name, repoUrl, gamePath, description, coverImage });
+});
+
+// Update existing game (Async)
+app.post('/api/update', async (req, res) => {
+  const { id } = req.body;
+  
+  const games = await loadGames();
+  const game = games.find(g => g.id === id);
+  
+  if (!game) {
+      return res.status(404).json({ error: 'Game not found' });
+  }
+
+  const jobId = Date.now().toString();
+  jobs[jobId] = {
+    id: jobId,
+    status: 'pending',
+    logs: [],
+    result: null
+  };
+
+  res.json({ success: true, jobId });
+
+  // Start background process
+  updateBackground(jobId, game);
+});
+
+// Background Deployment Logic
+const deployBackground = async (jobId, { name, repoUrl, gamePath, description, coverImage }) => {
+  const job = jobs[jobId];
+  const log = (msg, type = 'info') => {
+    console.log(`[Job ${jobId}] ${msg}`);
+    job.logs.push({ timestamp: new Date().toLocaleTimeString(), message: msg, type });
+  };
+
+  job.status = 'running';
+  log(`Starting deployment for ${name}...`);
+
   // Clean path (remove leading/trailing slashes)
   const cleanPath = gamePath.replace(/^\/+|\/+$/g, '');
   const targetDir = path.join(GAMES_DIR, cleanPath);
 
   try {
-    console.log(`Deploying ${name} to ${targetDir}...`);
-
     // 1. Check if directory exists, if so, clean it
     if (await fs.pathExists(targetDir)) {
-      console.log(`Directory ${targetDir} exists, removing...`);
+      log(`Directory ${targetDir} exists, removing...`);
       await fs.remove(targetDir);
     }
 
     // 2. Git Clone
-    console.log(`Cloning ${repoUrl}...`);
+    log(`Cloning ${repoUrl}...`);
     await runCommand(`git clone ${repoUrl} ${targetDir}`);
 
-    // 3. Install & Build (Detect if it's a Node project)
-    if (await fs.pathExists(path.join(targetDir, 'package.json'))) {
-        console.log('Node project detected. Installing dependencies...');
-        await runCommand(`cd ${targetDir} && npm install`);
-        
-        console.log('Building project...');
-        // Try standard build commands
-        try {
-            await runCommand(`cd ${targetDir} && npm run build`);
-        } catch (e) {
-             console.warn('Build failed or no build script, assuming raw files or dist mismatch.');
-        }
-    }
+    // 3. Install & Build
+    await performBuild(targetDir, cleanPath, log);
 
     // 4. Update Nginx Config
-    console.log('Updating Nginx configuration...');
+    log('Updating Nginx configuration...');
     let nginxConfig = await fs.readFile(NGINX_CONFIG_PATH, 'utf8');
     
     // Check if location block already exists
@@ -142,7 +220,7 @@ app.post('/api/deploy', async (req, res) => {
             await fs.writeFile(NGINX_CONFIG_PATH, nginxConfig);
             
             // Reload Nginx
-            console.log('Reloading Nginx...');
+            log('Reloading Nginx...');
             await runCommand('nginx -s reload');
         }
     }
@@ -170,13 +248,62 @@ app.post('/api/deploy', async (req, res) => {
     
     await saveGames(games);
 
-    res.json({ success: true, game: newGame });
+    job.status = 'completed';
+    job.result = newGame;
+    log('Deployment successful!', 'success');
 
   } catch (error) {
     console.error('Deployment failed:', error);
-    res.status(500).json({ error: error.message });
+    job.status = 'failed';
+    log(`Deployment failed: ${error.message}`, 'error');
   }
-});
+};
+
+// Background Update Logic
+const updateBackground = async (jobId, game) => {
+  const job = jobs[jobId];
+  const log = (msg, type = 'info') => {
+    console.log(`[Job ${jobId}] ${msg}`);
+    job.logs.push({ timestamp: new Date().toLocaleTimeString(), message: msg, type });
+  };
+
+  job.status = 'running';
+  log(`Starting update for ${game.name}...`);
+
+  const cleanPath = game.path.replace(/^\/+|\/+$/g, '');
+  const targetDir = path.join(GAMES_DIR, cleanPath);
+
+  try {
+    // 1. Check if directory exists
+    if (!await fs.pathExists(targetDir)) {
+       throw new Error(`Directory ${targetDir} does not exist. Cannot update.`);
+    }
+
+    // 2. Git Pull
+    log('Pulling latest changes from GitHub...');
+    await runCommand(`cd ${targetDir} && git reset --hard HEAD && git pull`);
+
+    // 3. Install & Build
+    await performBuild(targetDir, cleanPath, log);
+    
+    // 4. Update Timestamp
+    const games = await loadGames();
+    const existingIndex = games.findIndex(g => g.id === game.id);
+    if (existingIndex >= 0) {
+        games[existingIndex].lastUpdated = new Date().toISOString();
+        await saveGames(games);
+    }
+
+    job.status = 'completed';
+    job.result = games[existingIndex];
+    log('Update successful!', 'success');
+
+  } catch (error) {
+    console.error('Update failed:', error);
+    job.status = 'failed';
+    log(`Update failed: ${error.message}`, 'error');
+  }
+};
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
