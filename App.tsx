@@ -96,13 +96,36 @@ const App: React.FC = () => {
   const [view, setView] = useState<ViewState>(ViewState.LOBBY);
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState(false);
-  const [projects, setProjects] = useState<Project[]>(INITIAL_PROJECTS);
   
+  // Initialize projects from localStorage or default
+  const [projects, setProjects] = useState<Project[]>(() => {
+    try {
+      const savedProjects = localStorage.getItem('demo_center_projects');
+      return savedProjects ? JSON.parse(savedProjects) : INITIAL_PROJECTS;
+    } catch (e) {
+      console.error("Failed to load projects from storage", e);
+      return INITIAL_PROJECTS;
+    }
+  });
+  
+  // Persist projects whenever they change
+  useEffect(() => {
+    localStorage.setItem('demo_center_projects', JSON.stringify(projects));
+  }, [projects]);
+
   // Admin Management State
   const [editingProject, setEditingProject] = useState<Project | null>(null);
 
   // System Upgrade State
-  const [systemVersion, setSystemVersion] = useState('v1.8.4');
+  const [systemVersion, setSystemVersion] = useState(() => {
+    return localStorage.getItem('demo_center_sys_version') || 'v1.8.4';
+  });
+  
+  // Persist system version
+  useEffect(() => {
+    localStorage.setItem('demo_center_sys_version', systemVersion);
+  }, [systemVersion]);
+
   const [latestSystemVersion, setLatestSystemVersion] = useState<string | null>(null);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [upgradeState, setUpgradeState] = useState<{
