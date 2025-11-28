@@ -163,6 +163,52 @@ app.post('/api/update', async (req, res) => {
   updateBackground(jobId, game);
 });
 
+// Smart Git Clone with Retry and Mirror Fallback
+const gitClone = async (repoUrl, targetDir, log) => {
+    const cleanRepoUrl = repoUrl.trim();
+    
+    // 1. Try Standard Clone (3 retries)
+    for (let i = 0; i < 3; i++) {
+        try {
+            log(`Cloning ${cleanRepoUrl}... (Attempt ${i + 1}/3)`);
+            await runCommand(`git clone ${cleanRepoUrl} ${targetDir}`);
+            return;
+        } catch (e) {
+            log(`Clone attempt ${i + 1} failed.`, 'warning');
+            if (i < 2) await new Promise(r => setTimeout(r, 2000));
+        }
+    }
+
+    // 2. Try Mirror (if applicable)
+    // Using ghproxy.com for github links
+    if (cleanRepoUrl.startsWith('https://github.com/')) {
+        const mirrorUrl = `https://mirror.ghproxy.com/${cleanRepoUrl}`;
+        try {
+             log(`Standard clone failed. Trying mirror: ${mirrorUrl}...`);
+             await runCommand(`git clone ${mirrorUrl} ${targetDir}`);
+             return;
+        } catch (e) {
+             log(`Mirror clone failed too.`, 'error');
+        }
+    }
+    
+    throw new Error('All clone attempts failed. Please check the URL or network.');
+};
+
+// Smart Git Pull with Retry
+const gitPull = async (targetDir, log) => {
+    for (let i = 0; i < 3; i++) {
+        try {
+            await runCommand(`cd ${targetDir} && git reset --hard HEAD && git pull`);
+            return;
+        } catch (e) {
+             log(`Pull attempt ${i + 1} failed.`, 'warning');
+             if (i < 2) await new Promise(r => setTimeout(r, 2000));
+        }
+    }
+    throw new Error('Git pull failed after multiple attempts.');
+};
+
 // Background Deployment Logic
 const deployBackground = async (jobId, { name, repoUrl, gamePath, description, coverImage }) => {
   const job = jobs[jobId];
@@ -186,10 +232,10 @@ const deployBackground = async (jobId, { name, repoUrl, gamePath, description, c
     }
 
     // 2. Git Clone
-    log(`Cloning ${repoUrl}...`);
-    await runCommand(`git clone ${repoUrl} ${targetDir}`);
+    await gitClone(repoUrl, targetDir, log);
 
     // 3. Install & Build
+
     await performBuild(targetDir, cleanPath, log);
 
     // 4. Update Nginx Config
@@ -281,7 +327,7 @@ const updateBackground = async (jobId, game) => {
 
     // 2. Git Pull
     log('Pulling latest changes from GitHub...');
-    await runCommand(`cd ${targetDir} && git reset --hard HEAD && git pull`);
+    await gitPull(targetDir, log);
 
     // 3. Install & Build
     await performBuild(targetDir, cleanPath, log);
