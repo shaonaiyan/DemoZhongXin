@@ -54,9 +54,14 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project }) => {
           <span className="text-xs text-gray-600 font-mono group-hover:text-gray-400 transition-colors">
             更新: {project.lastUpdated.split(' ')[0]}
           </span>
-          <button className="px-5 py-2 bg-gradient-to-r from-cyan-900/50 to-blue-900/50 hover:from-cyan-600 hover:to-blue-600 text-cyan-400 hover:text-white border border-cyan-500/30 hover:border-cyan-400 rounded transition-all duration-300 font-bold text-xs shadow-[0_0_10px_rgba(6,182,212,0.1)] hover:shadow-[0_0_20px_rgba(6,182,212,0.4)]">
+          <a 
+            href={project.path}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-5 py-2 bg-gradient-to-r from-cyan-900/50 to-blue-900/50 hover:from-cyan-600 hover:to-blue-600 text-cyan-400 hover:text-white border border-cyan-500/30 hover:border-cyan-400 rounded transition-all duration-300 font-bold text-xs shadow-[0_0_10px_rgba(6,182,212,0.1)] hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] text-center no-underline"
+          >
             立即启动
-          </button>
+          </a>
         </div>
       </div>
     </div>

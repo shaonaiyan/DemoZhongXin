@@ -18,7 +18,7 @@ const EditModal: React.FC<EditModalProps> = ({ project, onSave, onCancel }) => {
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in">
-      <div className="glass-panel p-6 rounded-xl w-full max-w-lg border border-cyan-500/30 shadow-[0_0_50px_rgba(6,182,212,0.2)]">
+      <div className="glass-panel p-6 rounded-xl w-full max-w-lg border border-cyan-500/30 shadow-[0_0_50px_rgba(6,182,212,0.2)] max-h-[90vh] overflow-y-auto custom-scrollbar">
         <h3 className="text-xl font-cyber font-bold text-white mb-6 border-b border-gray-700 pb-2">
           配置项目 <span className="text-cyan-400">Settings</span>
         </h3>
@@ -33,24 +33,45 @@ const EditModal: React.FC<EditModalProps> = ({ project, onSave, onCancel }) => {
             />
           </div>
           <div>
-            <label className="text-xs text-gray-500 font-mono block mb-1">版本号 (VERSION)</label>
+            <label className="text-xs text-gray-500 font-mono block mb-1">仓库地址 (REPO URL)</label>
             <input 
               className="w-full bg-black/50 border border-gray-700 rounded p-2 text-white text-sm focus:border-cyan-500 focus:outline-none font-mono"
-              value={formData.version}
-              onChange={e => setFormData({...formData, version: e.target.value})}
+              value={formData.repoUrl}
+              onChange={e => setFormData({...formData, repoUrl: e.target.value})}
             />
           </div>
           <div>
-             <label className="text-xs text-gray-500 font-mono block mb-1">运行状态 (STATUS)</label>
-             <select 
-               className="w-full bg-black/50 border border-gray-700 rounded p-2 text-white text-sm focus:border-cyan-500 focus:outline-none"
-               value={formData.status}
-               onChange={e => setFormData({...formData, status: e.target.value as any})}
-             >
-               <option value="online">运行中 (Online)</option>
-               <option value="maintenance">维护中 (Maintenance)</option>
-               <option value="offline">已下线 (Offline)</option>
-             </select>
+            <label className="text-xs text-gray-500 font-mono block mb-1">封面图片 (COVER IMAGE)</label>
+            <div className="flex gap-2">
+              <input 
+                className="w-full bg-black/50 border border-gray-700 rounded p-2 text-white text-sm focus:border-cyan-500 focus:outline-none font-mono"
+                value={formData.coverImage}
+                onChange={e => setFormData({...formData, coverImage: e.target.value})}
+              />
+              <div className="w-10 h-10 rounded border border-gray-700 bg-cover bg-center shrink-0" style={{backgroundImage: `url(${formData.coverImage})`}} />
+            </div>
+          </div>
+          <div className="flex gap-4">
+            <div className="flex-1">
+              <label className="text-xs text-gray-500 font-mono block mb-1">版本号 (VERSION)</label>
+              <input 
+                className="w-full bg-black/50 border border-gray-700 rounded p-2 text-white text-sm focus:border-cyan-500 focus:outline-none font-mono"
+                value={formData.version}
+                onChange={e => setFormData({...formData, version: e.target.value})}
+              />
+            </div>
+            <div className="flex-1">
+               <label className="text-xs text-gray-500 font-mono block mb-1">运行状态 (STATUS)</label>
+               <select 
+                 className="w-full bg-black/50 border border-gray-700 rounded p-2 text-white text-sm focus:border-cyan-500 focus:outline-none"
+                 value={formData.status}
+                 onChange={e => setFormData({...formData, status: e.target.value as any})}
+               >
+                 <option value="online">运行中 (Online)</option>
+                 <option value="maintenance">维护中 (Maintenance)</option>
+                 <option value="offline">已下线 (Offline)</option>
+               </select>
+            </div>
           </div>
           <div>
             <label className="text-xs text-gray-500 font-mono block mb-1">描述 (DESCRIPTION)</label>
@@ -122,7 +143,11 @@ const App: React.FC = () => {
   };
 
   const handleUpdateProject = (updatedProject: Project) => {
-    setProjects(prev => prev.map(p => p.id === updatedProject.id ? updatedProject : p));
+    const projectWithTimestamp = {
+      ...updatedProject,
+      lastUpdated: new Date().toLocaleString()
+    };
+    setProjects(prev => prev.map(p => p.id === projectWithTimestamp.id ? projectWithTimestamp : p));
     setEditingProject(null);
   };
 
