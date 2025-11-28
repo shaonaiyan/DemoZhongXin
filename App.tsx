@@ -98,20 +98,35 @@ const App: React.FC = () => {
   const [authError, setAuthError] = useState(false);
   
   // Initialize projects from localStorage or default
-  const [projects, setProjects] = useState<Project[]>(() => {
-    try {
-      const savedProjects = localStorage.getItem('demo_center_projects');
-      return savedProjects ? JSON.parse(savedProjects) : INITIAL_PROJECTS;
-    } catch (e) {
-      console.error("Failed to load projects from storage", e);
-      return INITIAL_PROJECTS;
-    }
-  });
-  
-  // Persist projects whenever they change
+  const [projects, setProjects] = useState<Project[]>([]);
+
+  // Fetch projects from backend
   useEffect(() => {
-    localStorage.setItem('demo_center_projects', JSON.stringify(projects));
-  }, [projects]);
+    fetch('/api/games')
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setProjects(data);
+        }
+      })
+      .catch(err => {
+        console.error("Failed to fetch projects:", err);
+        setProjects(INITIAL_PROJECTS);
+      });
+  }, []);
+  
+  // Persist projects to backend
+  const syncProjects = async (newProjects: Project[]) => {
+    try {
+      await fetch('/api/games/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ games: newProjects })
+      });
+    } catch (e) {
+      console.error("Failed to sync projects", e);
+    }
+  };
 
   // Admin Management State
   const [editingProject, setEditingProject] = useState<Project | null>(null);
@@ -161,7 +176,9 @@ const App: React.FC = () => {
   // --- Project CRUD Handlers ---
   const handleDeleteProject = (id: string) => {
     if (window.confirm('确定要销毁该项目吗？此操作不可逆！\nConfirm deletion?')) {
-      setProjects(prev => prev.filter(p => p.id !== id));
+      const newProjects = projects.filter(p => p.id !== id);
+      setProjects(newProjects);
+      syncProjects(newProjects);
     }
   };
 
@@ -170,8 +187,10 @@ const App: React.FC = () => {
       ...updatedProject,
       lastUpdated: new Date().toLocaleString()
     };
-    setProjects(prev => prev.map(p => p.id === projectWithTimestamp.id ? projectWithTimestamp : p));
+    const newProjects = projects.map(p => p.id === projectWithTimestamp.id ? projectWithTimestamp : p);
+    setProjects(newProjects);
     setEditingProject(null);
+    syncProjects(newProjects);
   };
 
   // --- System Upgrade Handlers ---
@@ -211,34 +230,59 @@ const App: React.FC = () => {
     setDeployState({
       isDeploying: true,
       stage: DeployStage.CLONING,
-      logs: [],
+      logs: [{ timestamp: new Date().toLocaleTimeString(), message: `Preparing to deploy: ${repoUrl}`, type: 'info' }],
       errorAnalysis: undefined
     });
 
-    await simulateDeployment(
-      repoUrl,
-      forceFail,
-      // On Log
-      (log) => {
-        setDeployState(prev => ({
-          ...prev,
-          logs: [...prev.logs, log]
-        }));
-      },
-      // On Stage Change
-      async (stage) => {
-        setDeployState(prev => ({ ...prev, stage }));
-        
-        // If Failed, Trigger Gemini Analysis
-        if (stage === DeployStage.FAILED) {
-           // Wait slightly for logic to settle then trigger analysis
-           // Note: actual analysis call is in useEffect to ensure latest state logs
-        }
+    try {
+      const name = repoUrl.split('/').pop()?.replace('.git', '') || 'New Game';
+      const path = '/' + name.toLowerCase().replace(/[^a-z0-9]/g, '-');
+
+      setDeployState(prev => ({
+         ...prev,
+         logs: [...prev.logs, { timestamp: new Date().toLocaleTimeString(), message: 'Submitting deployment task to server...', type: 'info' }]
+       }));
+
+      const res = await fetch('/api/deploy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          repoUrl,
+          path,
+          description: 'Imported from GitHub'
+        })
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        throw new Error(result.error || 'Unknown error');
       }
-    );
+
+      setDeployState(prev => ({
+        ...prev,
+        stage: DeployStage.COMPLETED,
+        logs: [...prev.logs, { timestamp: new Date().toLocaleTimeString(), message: 'Deployment successful!', type: 'success' }]
+      }));
+      
+      // Refresh projects list
+      const listRes = await fetch('/api/games');
+      const listData = await listRes.json();
+      if (Array.isArray(listData)) {
+        setProjects(listData);
+      }
+
+    } catch (error: any) {
+       setDeployState(prev => ({
+        ...prev,
+        stage: DeployStage.FAILED,
+        logs: [...prev.logs, { timestamp: new Date().toLocaleTimeString(), message: `Deployment Failed: ${error.message}`, type: 'error' }]
+      }));
+    }
 
     setDeployState(prev => ({ ...prev, isDeploying: false }));
-  }, [repoUrl, forceFail]);
+  }, [repoUrl]);
 
   // Effect to trigger Gemini when stage becomes FAILED
   useEffect(() => {
@@ -249,20 +293,6 @@ const App: React.FC = () => {
         setDeployState(prev => ({ ...prev, errorAnalysis: analysis }));
       };
       runAnalysis();
-    } else if (deployState.stage === DeployStage.COMPLETED) {
-       // Check if project already exists (mock update) or create new
-       const newProject: Project = {
-         id: Date.now().toString(),
-         name: `New Project (${repoUrl.split('/').pop()})`,
-         description: '刚刚自动部署的新项目，请在管理列表中配置详细信息。',
-         version: 'v1.0.0',
-         repoUrl: repoUrl,
-         coverImage: `https://picsum.photos/seed/${Date.now()}/600/400`,
-         path: '/new-game',
-         status: 'online',
-         lastUpdated: new Date().toLocaleString()
-       };
-       setProjects(prev => [newProject, ...prev]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deployState.stage]);

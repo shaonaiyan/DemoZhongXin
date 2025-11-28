@@ -1,0 +1,24 @@
+[
+  {
+    "id": "1",
+    "name": "Neon Void",
+    "description": "迷幻风格的无尽虚空探索，基于 WebGL 的高性能渲染引擎。",
+    "version": "v1.2.0",
+    "repoUrl": "",
+    "coverImage": "https://picsum.photos/seed/neon/600/400",
+    "path": "/neon-void/",
+    "status": "online",
+    "lastUpdated": "2023-10-24 14:20"
+  },
+  {
+    "id": "2",
+    "name": "Fruit Machine",
+    "description": "经典的复古像素风水果机模拟器，重温街机时代的纯粹乐趣。",
+    "version": "v1.0.0",
+    "repoUrl": "",
+    "coverImage": "https://picsum.photos/seed/fruit/600/400",
+    "path": "/fruit-machine/",
+    "status": "online",
+    "lastUpdated": "2023-11-02 09:15"
+  }
+]
